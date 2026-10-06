@@ -1,8 +1,16 @@
 from __future__ import annotations
-from copy import deepcopy
+
+import ast
 import re
-from typing import overload
+from cmath import sqrt as csqrt
+from copy import deepcopy
+from decimal import Decimal
+from fractions import Fraction
 from math import sqrt
+from pprint import pp
+from typing import overload
+
+from Scanner import Scanner
 
 
 class EqualityMember:
@@ -16,7 +24,10 @@ class EqualityMember:
         return len(self.exp) - 1
 
     def nullify(self):
-        return EqualityMember(*map(lambda x: -1 * x, self.exp))
+        return -self
+
+    def __neg__(self):
+        return EqualityMember(*[-1 * x for x in self.exp])
 
     def __add__(self, other: EqualityMember):
         fac = deepcopy(self.exp)
@@ -33,14 +44,18 @@ class EqualityMember:
     def __getitem__(self, key: int):
         return self.exp[key]
 
+    def __matmul__(self, key: int) -> float:
+        return self.exp[key]
+
     @overload
     def __eq__(self, other: EqualityMember) -> bool: ...
     @overload
     def __eq__(self, other: object) -> bool: ...
+
     def __eq__(self, other: object | EqualityMember) -> bool:
-        assert (
-            type(other) is EqualityMember
-        ), "can only compare EqualityMember with EqualityMember"
+        assert type(other) is EqualityMember, (
+            "can only compare EqualityMember with EqualityMember"
+        )
         for x, y in zip(self.exp, other.exp):
             if x != y:
                 return False
@@ -57,14 +72,14 @@ class EqualityMember:
 
 class Equation:
     def __init__(self, left: EqualityMember, right: EqualityMember) -> None:
-        self.l = left
-        self.r = right
+        self.left = left
+        self.right = right
 
     def simplify(self):
-        return Equation(self.l + self.r.nullify(), EqualityMember(0))
+        return Equation(self.left + self.right.nullify(), EqualityMember(0))
 
     def solve(self):
-        if self.l == self.r:
+        if self.left == self.right:
             return print("any real number")
 
         if self.degree == 1:
@@ -74,35 +89,51 @@ class Equation:
             return self._solve2()
 
     def _solve1(self):
-        print("Solution:", (self.l[0] * -1) / self.l[1])
+        print("Solution:", (self.left[0] * -1) / self.left[1])
+
+    def _solve_complex(self, a: float, b: float, d: float):
+
+        def __format_complex(z: complex):
+            real = Fraction(Decimal(f"{z.real}"))
+            imag = Fraction(Decimal(f"{z.imag}"))
+            s = f"{real}"
+            s += " + " if z.imag >= 0 else " - "
+            s += f"{abs(imag.numerator)}i/{imag.denominator}"
+            return s
+
+        d0 = (-b - complex(imag=sqrt(-d))) / (2 * a)
+        d1 = (-b + complex(imag=sqrt(-d))) / (2 * a)
+        print(__format_complex(d0))
+        print(__format_complex(d1))
 
     def _solve2(self):
         d, a, b, _ = self.discriminant
         if d < 0:
             print("discriminant is strictly negative.")
-            print("no real solution")
+            self._solve_complex(a, b, d)
         elif d == 0:
             print(f"unique solution: {-(b / (2 * a))}")
         else:
             print("discriminant is strictly positive.")
             print(
-                f"2 solutions: {((-b - sqrt(d)) / (2 * a))} | {((-b + sqrt(d)) / (2 * a))}"
+                "2 solutions: "
+                f"{((-b - sqrt(d)) / (2 * a))} | {((-b + sqrt(d)) / (2 * a))}"
             )
 
     @property
     def degree(self):
-        return max(self.l.degree, self.r.degree)
+        return max(self.left.degree, self.right.degree)
 
     @property
     def discriminant(self):
-        assert self.r == EqualityMember(
-            0
-        ), "can only calculate discriminant on reduced form"
-        c, b, a = self.l.exp
+        assert self.right == EqualityMember(0), (
+            "can only calculate discriminant on reduced form"
+        )
+        c, b, a = self.left.exp
         return b**2 - 4 * (a * c), a, b, c
 
     def __str__(self) -> str:
-        return f"{self.l} = {self.r}"
+        return f"{self.left} = {self.right}"
 
     def __repr__(self) -> str:
         return str(self)
@@ -111,7 +142,7 @@ class Equation:
 class Parser:
     @staticmethod
     def new_equation_from_string(inp: str) -> Equation:
-        first, second = [*map(lambda x: x.strip(), inp.split("="))]
+        first, second = [x.strip() for x in inp.split("=")]
 
         return Equation(
             Parser.new_member_from_string(first),
@@ -131,11 +162,14 @@ class Parser:
         return EqualityMember(*factors)
 
 
-f = Parser.new_equation_from_string("5 * X^0 + 4 * X^1 = 4 * X^0")
+""" f = Parser.new_equation_from_string("1 * X^0 + 2 * X^1 + 5 * X^2 = 0")
 r = f.simplify()
 print(f"Reduced form: {r}")
 print(f"Polynomial degree: {r.degree}")
 if r.degree > 2:
     print("The polynomial degree is strictly greater than 2, I can't solve.")
 else:
-    r.solve()
+    r.solve() """
+
+s = Scanner("1 * X^0 + 2 * X^1 + 5 * X^2 = 0")
+pp(s.lex())
