@@ -1,124 +1,26 @@
 from __future__ import annotations
 
-import code
-import readline
-from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from enum import Enum
 from io import BytesIO
-from token import (
-    CIRCUMFLEX,
-    DOUBLESTAR,
-    ENCODING,
-    ENDMARKER,
-    EQUAL,
-    LPAR,
-    MINUS,
-    NAME,
-    NEWLINE,
-    NUMBER,
-    PLUS,
-    RPAR,
-    SLASH,
-    STAR,
+from token import ENCODING
+from tokenize import tokenize
+
+from Parser import (
+    BinOp,
+    Expr,
+    ExprVisitor,
+    Grouping,
+    Number,
+    Parser,
+    Token,
+    TokenType,
+    UnOp,
+    Variable,
 )
-from tokenize import TokenInfo, tokenize
-from typing import Generic, TypeVar
-
-R = TypeVar("R")
 
 
-class TokenType(Enum):
-    MINUS = MINUS
-    PLUS = PLUS
-    SLASH = SLASH
-    STAR = STAR
-    EQUAL = EQUAL
-    NUMBER = NUMBER
-    NAME = NAME
-    LPAR = LPAR
-    RPAR = RPAR
-    DOUBLESTAR = DOUBLESTAR
-    CIRCUMFLEX = CIRCUMFLEX
-    ENDMARKER = ENDMARKER
-    ENCODING = ENCODING
-    NEWLINE = NEWLINE
-
-
-@dataclass
-class Token:
-    type: TokenType
-    lexeme: str
-    literal: float | None
-
-    @staticmethod
-    def from_token_info(ti: TokenInfo) -> Token:
-        return Token(
-            type=TokenType(ti.exact_type),
-            lexeme=ti.string,
-            literal=float(ti.string) if ti.type == NUMBER else None,
-        )
-
-
-class ExprVisitor(ABC, Generic[R]):
-    @abstractmethod
-    def visit_number(self, node: Number) -> R: ...
-    @abstractmethod
-    def visit_binary(self, node: BinOp) -> R: ...
-    @abstractmethod
-    def visit_grouping(self, node: Grouping) -> R: ...
-    @abstractmethod
-    def visit_unary(self, node: UnOp) -> R: ...
-    @abstractmethod
-    def visit_variable(self, node: Variable) -> R: ...
-
-
-class Expr(ABC):
-    @abstractmethod
-    def accept(self, visitor: ExprVisitor[R]) -> R: ...
-
-
-@dataclass(frozen=True)
-class Number(Expr):
-    value: float
-
-    def accept(self, visitor: ExprVisitor[R]) -> R:
-        return visitor.visit_number(self)
-
-
-@dataclass(frozen=True)
-class BinOp(Expr):
-    left: Expr
-    op: Token
-    right: Expr
-
-    def accept(self, visitor: ExprVisitor[R]) -> R:
-        return visitor.visit_binary(self)
-
-
-@dataclass(frozen=True)
-class UnOp(Expr):
-    op: Token
-    right: Expr
-
-    def accept(self, visitor: ExprVisitor[R]) -> R:
-        return visitor.visit_unary(self)
-
-
-@dataclass(frozen=True)
-class Grouping(Expr):
-    expression: Expr
-
-    def accept(self, visitor: ExprVisitor[R]) -> R:
-        return visitor.visit_grouping(self)
-
-
-@dataclass(frozen=True)
-class Variable(Expr):
-    name: Token
-
-    def accept(self, visitor: ExprVisitor[R]) -> R:
-        return visitor.visit_variable(self)
+def classname(o: object) -> str:
+    return o.__class__.__name__
 
 
 class Scanner:
@@ -143,10 +45,12 @@ class Printer(ExprVisitor[str]):
         self.level = 0
 
     def parenthesize(self, name: str, *expressions: Expr) -> str:
-        s: str = ""
+        self.level += 1
+        s: str = f"[{self.level}]"
         s += "(" + name
         for expr in expressions:
             s += " " + expr.accept(self)
+        self.level -= 1
         s += ")"
         return s
 
@@ -154,10 +58,10 @@ class Printer(ExprVisitor[str]):
         return self.parenthesize(node.op.lexeme, node.right)
 
     def visit_number(self, node: Number) -> str:
-        return f"{node.value}"
+        return f"n:{node.value}"
 
     def visit_variable(self, node: Variable) -> str:
-        return node.name.lexeme
+        return f"v:{node.name.lexeme}"
 
     def visit_binary(self, node: BinOp) -> str:
         return self.parenthesize(node.op.lexeme, node.left, node.right)
@@ -166,138 +70,204 @@ class Printer(ExprVisitor[str]):
         return self.parenthesize("group", node.expression)
 
     def print(self, expression: Expr) -> None:
+        self.level = 0
         print(expression.accept(self))
 
 
-class Parser:
-    tokens: list[Token]
-    current: int
+class XVar:
+    is_neg: bool
+    degree: int
+    fac: float
 
-    def __init__(self, tokens: list[Token]) -> None:
-        self.tokens = tokens
-        self.current = 0
+    def __init__(self, degree: int = 0, fac: float = 1.0) -> None:
+        self.degree = degree
+        self.fac = fac
+        self.is_neg = fac < 0
 
-    def _peek(self) -> Token:
-        return self.tokens[self.current]
+    def copy(self):
+        return XVar(
+            degree=self.degree,
+            fac=self.fac,
+        )
 
-    def _is_at_end(self):
-        return self._peek().type == TokenType.ENDMARKER
+    def __str__(self) -> str:
+        if self.degree == 0:
+            return f"{self.fac}"
+        if self.fac == 1:
+            return f"X^{self.degree}"
+        return f"{self.fac} * X^{self.degree}"
 
-    def _check(self, type: TokenType) -> bool:
-        if self._is_at_end():
-            return False
-        return self._peek().type == type
+    def __repr__(self) -> str:
+        return str(self)
 
-    def _previous(self) -> Token:
-        return self.tokens[self.current - 1]
+    def __neg__(self):
+        x = self.copy()
+        x.is_neg = not x.is_neg
+        x.fac = -x.fac
+        return x
 
-    def _advance(self) -> Token:
-        if not self._is_at_end():
-            self.current += 1
-        return self._previous()
+    def __add__(self, other: XVar) -> XVar:
+        if self.degree != other.degree:
+            raise ValueError("Cannot add XVar of different degree")
+        val = self.fac + other.fac
+        return XVar(
+            fac=val,
+            degree=self.degree,
+        )
 
-    def _match(self, *types: TokenType) -> bool:
-        for type in types:
-            if self._check(type):
-                self._advance()
-                return True
+    def __eq__(self, other: object) -> bool:
+        if isinstance(other, XVar):
+            return self.fac == other.fac and self.degree == other.degree
+        if isinstance(other, (float, int)):
+            return self.fac == other and self.degree == 0
         return False
 
-    def _expression(self) -> Expr:
-        return self._equality()
+    def __ne__(self, other: object) -> bool:
+        return not self == other
 
-    def _equality(self) -> Expr:
-        expr = self._term()
-        while self._match(TokenType.EQUAL):
-            expr = BinOp(
-                left=expr,
-                op=self._previous(),
-                right=self._term(),
-            )
-        return expr
+    def __sub__(self, other: XVar) -> XVar:
+        return self + -other
 
-    def _term(self) -> Expr:
-        expr = self._factor()
-        while self._match(
-            TokenType.MINUS,
-            TokenType.PLUS,
+    def __abs__(self) -> XVar:
+        return XVar(fac=abs(self.fac), degree=self.degree)
+
+    def __gt__(self, other: object) -> bool:
+        if isinstance(other, XVar):
+            return self.fac > other.fac and self.degree == other.degree
+        if isinstance(other, (float, int)):
+            return self.fac > other and self.degree == 0
+        return False
+
+
+@dataclass
+class Triplet:
+    left: object
+    op: TokenType
+    right: object
+
+
+class Simplifyer(ExprVisitor[object]):
+    level: int
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.level = 0
+
+    def _handle_pow(self, l: object, r: object) -> float | XVar:
+        if isinstance(l, XVar) and isinstance(r, float):
+            l.degree = int(r)
+            return l
+        if isinstance(l, float) and isinstance(r, float):
+            return l**r
+        raise TypeError(
+            f"Expected float, got {classname(r)}",
+        )
+
+    def _handle_mul(self, l: object, r: object):
+        if isinstance(l, Triplet):
+            print(l)
+        if isinstance(r, XVar) and isinstance(l, float):
+            r.fac = l
+            return r
+        if isinstance(l, XVar) and isinstance(r, float):
+            l.fac = r
+            return l
+        if isinstance(l, float) and isinstance(r, float):
+            return l * r
+        if isinstance(l, Triplet) and isinstance(r, float):
+            l.left = self._handle_mul(l.left, r)
+            l.right = self._handle_mul(l.right, r)
+            return l
+        raise TypeError(
+            f"\nl:{classname(l)} {l!r}\nr:{classname(r)} {r!r}",
+        )
+
+    def _handle_add_sub(self, l: object, r: object, op: TokenType) -> object:
+
+        if isinstance(l, float) and isinstance(r, float):
+            if op == TokenType.PLUS:
+                return l + r
+            else:
+                return l - r
+        if (
+            isinstance(r, float)
+            or isinstance(r, XVar)
+            and op == TokenType.MINUS
         ):
-            expr = BinOp(
-                left=expr,
-                op=self._previous(),
-                right=self._factor(),
+            return Triplet(left=l, op=op, right=-r)
+        return Triplet(left=l, op=op, right=r)
+
+    def visit_binary(self, node: BinOp) -> object:
+        self.level += 1
+        l = node.left.accept(self)
+        r = node.right.accept(self)
+        self.level -= 1
+        if node.op.type in (TokenType.CIRCUMFLEX, TokenType.DOUBLESTAR):
+            return self._handle_pow(l, r)
+        if node.op.type in (TokenType.STAR,):
+            return self._handle_mul(l, r)
+        if node.op.type in (TokenType.PLUS, TokenType.MINUS):
+            return self._handle_add_sub(l, r, node.op.type)
+        return Triplet(
+            left=l,
+            op=node.op.type,
+            right=r,
+        )
+
+    def visit_unary(self, node: UnOp) -> float | XVar:
+        self.level += 1
+        right = self.evaluate(node.right)
+        self.level -= 1
+        if node.op.type == TokenType.MINUS:
+            if isinstance(right, (float, XVar)):
+                return -right
+        elif node.op.type == TokenType.PLUS:
+            if isinstance(right, (float, XVar)):
+                return right
+            raise TypeError(
+                f"Got invalid type {classname(right)}",
             )
-        return expr
+        raise TypeError(f"Got invalid op type {node.op.type}")
 
-    def _factor(self) -> Expr:
-        expr = self._unary()
-        while self._match(
-            TokenType.SLASH,
-            TokenType.STAR,
-        ):
-            expr = BinOp(
-                left=expr,
-                op=self._previous(),
-                right=self._unary(),
-            )
-        return expr
+    def visit_number(self, node: Number) -> float:
+        return node.value
 
-    def _unary(self) -> Expr:
-        if self._match(
-            TokenType.MINUS,
-            TokenType.PLUS,
-        ):
-            return UnOp(
-                op=self._previous(),
-                right=self._unary(),
-            )
-        return self._power()
+    def visit_variable(self, node: Variable) -> XVar:
+        return XVar(degree=1)
 
-    def _power(self) -> Expr:
-        expr = self._primary()
-        if self._match(
-            TokenType.CIRCUMFLEX,
-            TokenType.DOUBLESTAR,
-        ):
-            expr = BinOp(
-                left=expr,
-                op=self._previous(),
-                right=self._unary(),
-            )
-        return expr
+    def visit_grouping(self, node: Grouping) -> object:
+        return self.evaluate(node.expression)
 
-    def _primary(self) -> Expr:
-        if self._match(TokenType.NUMBER):
-            lit = self._previous().literal
-            assert lit is not None, (
-                "literal should not be None when matching a number"
-            )
-            return Number(lit)
-        if self._match(TokenType.NAME):
-            return Variable(self._previous())
-        if self._match(TokenType.LPAR):
-            expr = self._expression()
-            self._consume(TokenType.RPAR, "missing `)`")
-            return Grouping(expression=expr)
-        raise RuntimeError(self._peek())
+    def evaluate(self, expr: Expr) -> object:
+        self.level += 1
+        e = expr.accept(self)
+        self.level -= 1
+        return e
 
-    def _consume(self, type: TokenType, msg: str) -> Token:
-        if self._check(type):
-            return self._advance()
-        raise RuntimeError(msg, self._peek())
-
-    def parse(self) -> Expr:
-        return self._expression()
+    def exec(self, expr: Expr) -> object:
+        self.level = 0
+        if not isinstance(expr, BinOp) or expr.op.type != TokenType.EQUAL:
+            raise RuntimeError("Missing equality")
+        return expr.accept(self)
 
 
-while True:
-    try:
-        s = Scanner(input("expr> ").rstrip())
-        p = Parser(s.lex())
-        e = p.parse()
-        Printer().print(e)
-    except (RuntimeError, ValueError) as e:
-        print(f"got {type(e).__name__} -> {e}")
-    except (EOFError, KeyboardInterrupt):
-        print("\nexiting")
-        break
+class Input:
+    _scn: Scanner
+    _prs: Parser
+    _tks: list[Token]
+
+    def __init__(self) -> None:
+        pass
+
+    def string(self, s: str):
+        self._scn = Scanner(s)
+        return self
+
+    def get(self):
+        self._scn = Scanner(input(">"))
+        return self
+
+    def parse(self):
+        self._tks = self._scn.lex()
+        self._prs = Parser(self._tks)
+        return self._prs.parse()
