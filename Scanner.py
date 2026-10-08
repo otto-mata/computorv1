@@ -91,10 +91,10 @@ class XVar:
         )
 
     def __str__(self) -> str:
-        if self.degree == 0:
-            return f"{self.fac}"
-        if self.fac == 1:
-            return f"X^{self.degree}"
+        # if self.degree == 0:
+        #     return f"{self.fac}"
+        # if self.fac == 1:
+        #     return f"X^{self.degree}"
         return f"{self.fac} * X^{self.degree}"
 
     def __repr__(self) -> str:
@@ -164,8 +164,6 @@ class Simplifyer(ExprVisitor[object]):
         )
 
     def _handle_mul(self, l: object, r: object):
-        if isinstance(l, Triplet):
-            print(l)
         if isinstance(r, XVar) and isinstance(l, float):
             r.fac = l
             return r
@@ -189,11 +187,7 @@ class Simplifyer(ExprVisitor[object]):
                 return l + r
             else:
                 return l - r
-        if (
-            isinstance(r, float)
-            or isinstance(r, XVar)
-            and op == TokenType.MINUS
-        ):
+        if (isinstance(r, (float, XVar))) and op == TokenType.MINUS:
             return Triplet(left=l, op=op, right=-r)
         return Triplet(left=l, op=op, right=r)
 
@@ -216,17 +210,14 @@ class Simplifyer(ExprVisitor[object]):
 
     def visit_unary(self, node: UnOp) -> float | XVar:
         self.level += 1
-        right = self.evaluate(node.right)
+        right = node.right.accept(self)
         self.level -= 1
-        if node.op.type == TokenType.MINUS:
-            if isinstance(right, (float, XVar)):
+        if isinstance(right, (float, XVar)):
+            if node.op.type == TokenType.MINUS:
                 return -right
-        elif node.op.type == TokenType.PLUS:
-            if isinstance(right, (float, XVar)):
+            elif node.op.type == TokenType.PLUS:
                 return right
-            raise TypeError(
-                f"Got invalid type {classname(right)}",
-            )
+
         raise TypeError(f"Got invalid op type {node.op.type}")
 
     def visit_number(self, node: Number) -> float:

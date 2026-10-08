@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import readline  # noqa: F401
+import sys
 from decimal import Decimal
 from fractions import Fraction
-from math import sqrt
+from math import isqrt
 from typing import overload
 
 from Parser import Expr, TokenType
@@ -25,29 +26,29 @@ class EqualityMember:
     def degree(self):
         deg = 0
         for i, v in enumerate(self.parts):
-            if v.fac > 0:
+            if v.fac != 0:
                 deg = i
         return deg
+
+    @property
+    def _cdeg(self):
+        """degree including null factors"""
+        return len(self.parts) - 1
 
     def _reduce_factors(self) -> list[float]:
         return [p.fac for p in self.parts]
 
     def _iadd_xvar(self, e: XVar):
-        if self.degree < e.degree:
+        if self._cdeg < e.degree:
             self.parts += [
-                XVar(fac=0, degree=i) for i in range(self.degree + 1, e.degree)
-            ] + [e]
+                XVar(fac=0, degree=i) for i in range(self._cdeg + 1, e.degree)
+            ]
+            self.parts += [e]
         else:
             self.parts[e.degree] += e
         return self
 
     def _iadd_em(self, em: EqualityMember):
-        if self.degree < em.degree:
-            self.parts += [
-                XVar(fac=0, degree=i)
-                for i in range(self.degree + 1, em.degree)
-            ]
-
         for i, v in enumerate(em.parts):
             self.parts[i] += v
         return self
@@ -135,8 +136,23 @@ class Equation:
 
     @property
     def discriminant(self):
-        c, b, a = [x.fac for x in self.reduced.left.parts[:3]]
-        return b**2 - 4 * (a * c), a, b, c
+        return self.b**2 - 4 * (self.a * self.c)
+
+    @property
+    def a(self):
+        if self.degree >= 2:
+            return self.reduced.left.parts[2].fac
+        return 0
+
+    @property
+    def b(self):
+        if self.degree >= 1:
+            return self.reduced.left.parts[1].fac
+        return 0
+
+    @property
+    def c(self):
+        return self.reduced.left.parts[0].fac
 
     @classmethod
     def _flatten_r(
@@ -229,48 +245,68 @@ class Equation:
 
     def _solve1(self):
         print("The solution is:")
-        b, a = [x.fac for x in self.reduced.left.parts[:2]]
-        print(-b / a)
+        print(-self.c / self.b)
 
-    def _solve_complex(self, a: float, b: float, d: float):
+    def _solve_complex(self):
 
         def __format_complex(z: complex):
-            real = Fraction(Decimal(f"{z.real}"))
-            imag = Fraction(Decimal(f"{z.imag}"))
-            s = f"{real}"
-            s += " + " if z.imag >= 0 else " - "
-            s += f"{abs(imag.numerator)}i/{imag.denominator}"
-            return s
+            sl = []
+            real = Decimal(f"{z.real}")
+            imag = Decimal(f"{z.imag}")
+            if real != 0:
+                sl.append(f"{real}")
+            sl.append(f"± {imag}i")
+            return " ".join(sl)
 
-        d0 = (-b - complex(imag=sqrt(-d))) / (2 * a)
-        d1 = (-b + complex(imag=sqrt(-d))) / (2 * a)
+        if self.c != 0 and self.b == 0:
+            ...
+        d0 = (-self.b + complex(imag=(-self.discriminant) ** 0.5)) / (
+            2 * self.a
+        )
         print(__format_complex(d0))
-        print(__format_complex(d1))
 
     def _solve2(self):
-        d, a, b, _ = self.discriminant
+        d = self.discriminant
         if d < 0:
             print(
                 "Discriminant is strictly negative, "
                 "the two complex solutions are:"
             )
-            self._solve_complex(a, b, d)
+            self._solve_complex()
         elif d == 0:
-            print(f"The solution is:\n{-(b / (2 * a))}")
+            print(f"The solution is:\n{-(self.b / (2 * self.a))}")
         else:
             print("Discriminant is strictly positive, the two solutions are:")
-            print(f"{((-b - sqrt(d)) / (2 * a)):.6f}")
-            print(f"{((-b + sqrt(d)) / (2 * a)):.6f}")
+            if self.c != 0 and self.b == 0:
+                if isqrt(int(abs(self.c))) ** 2 == abs(self.c):
+                    print(f"±{abs(self.c) ** 0.5}")
+                else:
+                    print(f"±√{abs(self.c)}")
+            else:
+                d0 = (-self.b + (d**0.5)) / (2 * self.a)
+                d1 = (-self.b - (d**0.5)) / (2 * self.a)
+                if d0 == 0:
+                    d0 = abs(d0)
+                if d1 == 0:
+                    d1 = abs(d1)
+                print(Decimal(f"{d0:.6}"))
+                print(Decimal(f"{d1:.6}"))
 
 
-while True:
+def main(argc: int, argv: list[str]):
     try:
-        expr = Input().get().parse()
+        if argc == 1:
+            expr = Input().get().parse()
+        else:
+            expr = Input().string(argv[1]).parse()
         eq = Equation.create_from(expr)
         eq.solve()
     except (RuntimeError, ValueError) as e:
         print(f"got {classname(e)} -> {e}")
-        raise e
     except (EOFError, KeyboardInterrupt):
         print("\nexiting")
-        break
+        return
+
+
+if __name__ == "__main__":
+    main(len(sys.argv), sys.argv)
